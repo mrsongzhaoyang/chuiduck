@@ -114,11 +114,7 @@ export async function getTaskPage(): Promise<BrowserPage> {
   await new Promise((r) => setTimeout(r, 300))
 
   const tabId = getSelectedTabId()
-  if (!tabId) {
-    throw new Error('未找到可用标签页。请先在 Chrome 中打开要操作的页面，或在浏览器管理中选择 Tab。')
-  }
-
-  return new ExtensionPage(tabId)
+  return new ExtensionPage(tabId || '')
 }
 
 export async function getActivePage(): Promise<BrowserPage> {

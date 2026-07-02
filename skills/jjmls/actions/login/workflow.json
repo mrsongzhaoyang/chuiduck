@@ -1,0 +1,51 @@
+{
+  "id": "login",
+  "name": "登录内容驾驶舱",
+  "nodes": [
+    {
+      "id": "step-open",
+      "type": "openPage",
+      "name": "打开登录页",
+      "url": "{{loginUrl}}"
+    },
+    {
+      "id": "step-wait-form",
+      "type": "wait",
+      "name": "等待登录框出现",
+      "selector": "input[placeholder=\"账号\"]",
+      "ms": 30000
+    },
+    {
+      "id": "step-input-user",
+      "type": "input",
+      "name": "填写登录名",
+      "selector": "input[placeholder=\"账号\"]",
+      "value": "{{username}}"
+    },
+    {
+      "id": "step-input-pass",
+      "type": "input",
+      "name": "填写密码",
+      "selector": "input[placeholder=\"密码\"]",
+      "value": "{{password}}"
+    },
+    {
+      "id": "step-click-login",
+      "type": "click",
+      "name": "点击登录",
+      "selector": "button.n-button--primary-type"
+    },
+    {
+      "id": "step-wait-after",
+      "type": "wait",
+      "name": "等待登录完成",
+      "ms": 3000
+    },
+    {
+      "id": "step-extract",
+      "type": "extract",
+      "name": "记录登录后页面信息",
+      "var": "loginResult"
+    }
+  ]
+}

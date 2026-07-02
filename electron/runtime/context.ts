@@ -37,7 +37,6 @@ export async function executeNode(page: BrowserPage, ctx: RuntimeContext, node: 
     case 'openPage': {
       const url = ctx.resolve(node.url)
       if (!url) throw new Error('openPage 缺少 url')
-      await page.bringToFront()
       await page.goto(url, { waitUntil: 'load', timeout: 90000 })
       break
     }

@@ -1,0 +1,37 @@
+{
+  "id": "jjmls",
+  "name": "竞价魔力搜",
+  "version": "1.0.0",
+  "platform": "内容驾驶舱",
+  "category": "system",
+  "description": "登录内容驾驶舱（tcm.ihorizons.cn）",
+  "author": "ChuiDuck",
+  "actions": [
+    {
+      "id": "login",
+      "name": "登录内容驾驶舱",
+      "description": "打开登录页，填写账号密码并点击登录",
+      "workflow": "actions/login/workflow.json",
+      "params": [
+        {
+          "field": "loginUrl",
+          "label": "登录地址",
+          "type": "string",
+          "default": "https://tcm.ihorizons.cn/login?redirect=/"
+        },
+        {
+          "field": "username",
+          "label": "登录名",
+          "type": "string",
+          "default": "ys6"
+        },
+        {
+          "field": "password",
+          "label": "登录密码",
+          "type": "string",
+          "default": "abc"
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import fs from 'fs-extra'
 import type { BrowserPage } from './browser-page.js'
-import { sendCdpCommand } from './extension-bridge.js'
+import { openExtensionTab, sendCdpCommand } from './extension-bridge.js'
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
@@ -9,16 +9,39 @@ function sleep(ms: number) {
 export class ExtensionPage implements BrowserPage {
   constructor(private tabId: string) {}
 
+  setTabId(tabId: string) {
+    this.tabId = tabId
+  }
+
   private async cdp(method: string, params: Record<string, unknown> = {}) {
+    if (!this.tabId) throw new Error('没有可用的标签页')
     return sendCdpCommand(this.tabId, method, params)
   }
 
+  private async isNavigableTab() {
+    if (!this.tabId) return false
+    try {
+      const currentUrl = await this.evaluate(() => location.href)
+      return currentUrl.startsWith('http://') || currentUrl.startsWith('https://')
+    } catch {
+      return false
+    }
+  }
+
   async bringToFront() {
+    if (!this.tabId) return
     await this.cdp('Page.bringToFront')
   }
 
   async goto(url: string, options?: { waitUntil?: string; timeout?: number }) {
     const timeout = options?.timeout || 90000
+    const needsNewTab = !(await this.isNavigableTab())
+    if (needsNewTab) {
+      const newTabId = await openExtensionTab(url)
+      this.tabId = newTabId
+      await this.waitForLoad(timeout)
+      return
+    }
     await this.bringToFront()
     await this.cdp('Page.navigate', { url })
     await this.waitForLoad(timeout)

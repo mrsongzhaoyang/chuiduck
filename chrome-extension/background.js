@@ -38,10 +38,7 @@ function setStatus(next, message) {
 
 function isUsableUrl(url) {
   if (!url) return false
-  if (url.startsWith('devtools://')) return false
-  if (url.startsWith('chrome-extension://')) return false
-  if (url.includes('BackgroundServiceWorker')) return false
-  return true
+  return url.startsWith('http://') || url.startsWith('https://')
 }
 
 async function listTabs() {
@@ -204,6 +201,11 @@ async function connect() {
       return
     }
 
+    if (msg.type === 'open-tab') {
+      void handleOpenTab(msg)
+      return
+    }
+
     if (msg.type === 'cdp') {
       void handleCdpRequest(msg)
     }
@@ -218,6 +220,25 @@ async function connect() {
   ws.onerror = () => {
     setStatus('error', '无法连接桌面端，请确认垂钓鸭已启动')
     ws.close()
+  }
+}
+
+async function handleOpenTab(msg) {
+  const requestId = String(msg.requestId)
+  try {
+    const tab = await chrome.tabs.create({ url: String(msg.url || 'about:blank'), active: true })
+    if (!tab.id) throw new Error('创建标签页失败')
+    selectedTabId = tab.id
+    socket?.send(JSON.stringify({ type: 'open-tab-result', requestId, tabId: tab.id }))
+    void sendHeartbeat()
+  } catch (err) {
+    socket?.send(
+      JSON.stringify({
+        type: 'open-tab-result',
+        requestId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    )
   }
 }
 

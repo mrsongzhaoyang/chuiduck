@@ -31,6 +31,7 @@ const HEARTBEAT_TIMEOUT_MS = 15000
 let wss: WebSocketServer | null = null
 let activeClient: ExtensionClient | null = null
 const pendingCdp = new Map<string, PendingCdp>()
+const pendingOpenTab = new Map<string, PendingCdp>()
 let selectedTabId: string | null = null
 let onStatusChange: ((status: BrowserStatus) => void) | null = null
 let lastSnapshot = ''
@@ -58,21 +59,12 @@ export function setBridgePort(port: number) {
 
 function isUsablePageUrl(url: string) {
   if (!url) return false
-  if (url.startsWith('devtools://')) return false
-  if (url.startsWith('chrome-extension://')) return false
-  if (url.includes('BackgroundServiceWorker')) return false
-  return true
+  return url.startsWith('http://') || url.startsWith('https://')
 }
 
 function rankTab(a: ExtensionTabInfo, b: ExtensionTabInfo) {
-  const score = (t: ExtensionTabInfo) => {
-    if (t.url.startsWith('http')) return 4
-    if (t.url !== 'about:blank' && t.url !== 'chrome://newtab/') return 3
-    if (t.url === 'chrome://newtab/') return 2
-    if (t.url !== 'about:blank') return 1
-    return 0
-  }
-  return score(b) - score(a)
+  if (a.active !== b.active) return a.active ? -1 : 1
+  return 0
 }
 
 function pickBestTabId(tabs: ExtensionTabInfo[], preferredId?: string | null) {
@@ -188,6 +180,11 @@ function rejectClient(reason: string) {
     pending.reject(new Error(reason))
   }
   pendingCdp.clear()
+  for (const pending of pendingOpenTab.values()) {
+    clearTimeout(pending.timer)
+    pending.reject(new Error(reason))
+  }
+  pendingOpenTab.clear()
 }
 
 function handleExtensionMessage(raw: string, extensionPath: string) {
@@ -233,6 +230,17 @@ function handleExtensionMessage(raw: string, extensionPath: string) {
     pendingCdp.delete(requestId)
     if (msg.error) pending.reject(new Error(String(msg.error)))
     else pending.resolve(msg.result)
+    return
+  }
+
+  if (type === 'open-tab-result') {
+    const requestId = String(msg.requestId || '')
+    const pending = pendingOpenTab.get(requestId)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    pendingOpenTab.delete(requestId)
+    if (msg.error) pending.reject(new Error(String(msg.error)))
+    else pending.resolve(String(msg.tabId || ''))
     return
   }
 
@@ -411,11 +419,42 @@ export async function sendCdpCommand(
       JSON.stringify({
         type: 'cdp',
         requestId,
-        tabId: Number(tabId),
+        tabId: tabId ? Number(tabId) : 0,
         method,
         params,
       })
     )
+  })
+}
+
+export async function openExtensionTab(url: string, timeoutMs = 60000): Promise<string> {
+  if (!activeClient || activeClient.ws.readyState !== WebSocket.OPEN) {
+    throw new Error('Chrome 插件未连接，请先安装插件并打开 Chrome')
+  }
+
+  const requestId = randomUUID()
+  return new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingOpenTab.delete(requestId)
+      reject(new Error('打开标签页超时'))
+    }, timeoutMs)
+
+    pendingOpenTab.set(requestId, {
+      resolve: (value) => {
+        const tabId = String(value || '')
+        if (!tabId) {
+          reject(new Error('打开标签页失败'))
+          return
+        }
+        selectedTabId = tabId
+        setSetting('selectedWindowId', tabId)
+        resolve(tabId)
+      },
+      reject,
+      timer,
+    })
+
+    activeClient!.ws.send(JSON.stringify({ type: 'open-tab', requestId, url }))
   })
 }
 
