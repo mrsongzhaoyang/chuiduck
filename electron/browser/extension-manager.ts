@@ -34,6 +34,7 @@ const DEFAULT_CHROME_PATHS = [
 ].filter(Boolean)
 
 let extensionInstallPath = ''
+let statusListener: ((status: BrowserStatus) => void) | null = null
 
 function getBundledExtensionDir() {
   if (app.isPackaged) {
@@ -46,8 +47,24 @@ function getBundledExtensionDir() {
 export async function ensureExtensionBundle() {
   const src = getBundledExtensionDir()
   const dest = join(getPaths().root, 'chrome-extension')
+  const versionFile = join(dest, '.bundle-version')
+  const srcManifest = join(src, 'manifest.json')
+
   if (await fs.pathExists(src)) {
-    await fs.copy(src, dest, { overwrite: true })
+    let needsCopy = true
+    if ((await fs.pathExists(versionFile)) && (await fs.pathExists(srcManifest))) {
+      const [cached, current] = await Promise.all([
+        fs.readFile(versionFile, 'utf8'),
+        fs.readFile(srcManifest, 'utf8'),
+      ])
+      needsCopy = cached !== current
+    }
+    if (needsCopy) {
+      await fs.copy(src, dest, { overwrite: true })
+      if (await fs.pathExists(srcManifest)) {
+        await fs.writeFile(versionFile, await fs.readFile(srcManifest, 'utf8'))
+      }
+    }
   }
   extensionInstallPath = dest
   return dest
@@ -159,7 +176,11 @@ export async function launchSystemChrome() {
     throw new Error('未找到 Chrome，可在设置中配置路径')
   }
 
-  spawn(chromePath, [], { detached: true, stdio: 'ignore', windowsHide: false }).unref()
+  const child = spawn(chromePath, [], { detached: true, stdio: 'ignore', windowsHide: false })
+  child.on('error', (err) => {
+    console.error('[browser] Chrome 启动失败:', err.message)
+  })
+  child.unref()
   await waitForExtension(30000)
   return getBrowserStatus()
 }
@@ -174,7 +195,16 @@ export function getDebugLaunchCommand() {
 }
 
 export function startCdpWatcher(onStatusChange: (status: BrowserStatus) => void) {
+  statusListener = onStatusChange
   startExtensionBridge(onStatusChange, extensionInstallPath)
+  startExtensionWatcher(extensionInstallPath)
+}
+
+export function restartExtensionBridge() {
+  if (!statusListener) return
+  stopExtensionWatcher()
+  stopExtensionBridge()
+  startExtensionBridge(statusListener, extensionInstallPath)
   startExtensionWatcher(extensionInstallPath)
 }
 

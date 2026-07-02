@@ -2,6 +2,20 @@
 
 export type TaskStatus = 'running' | 'completed' | 'error' | 'queued' | 'paused' | 'cancelled'
 
+export interface TaskSchedule {
+  enabled: boolean
+  cron: string
+  timezone: string
+  nextRunAt?: string
+  lastScheduledAt?: string
+}
+
+export interface TaskScheduleInput {
+  enabled: boolean
+  cron: string
+  timezone?: string
+}
+
 export interface SkillManifest {
   id: string
   name: string
@@ -106,6 +120,7 @@ export interface TaskRecord {
   progressText: string
   result: string
   params: Record<string, unknown>
+  schedule?: TaskSchedule
   createdAt: string
   updatedAt: string
   startedAt?: string
@@ -133,6 +148,8 @@ export interface TaskCheckpoint {
   variables: Record<string, unknown>
   loopStack: unknown[]
   updatedAt: string
+  /** after: 节点已完成，从下一节点恢复；at: 暂停于当前节点，从该节点恢复 */
+  resumeMode?: 'after' | 'at'
 }
 
 export interface TaskLogRecord {

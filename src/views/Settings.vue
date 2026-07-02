@@ -84,7 +84,15 @@ async function saveSettings() {
         </p>
         <NForm label-placement="left" label-width="140">
           <NFormItem label="桥接端口">
-            <NInputNumber v-model:value="settings.bridgePort" :min="1024" :max="65535" style="width: 100%" />
+            <div class="form-field-block">
+              <NInputNumber
+                v-model:value="settings.bridgePort"
+                :min="1024"
+                :max="65535"
+                class="port-input"
+              />
+              <p class="field-hint">修改后保存即可生效；若插件连不上，请同步更新插件中的端口并重新连接。</p>
+            </div>
           </NFormItem>
           <NFormItem label="浏览器账号">
             <NInput v-model:value="settings.browserAccount" placeholder="用于显示，如 xxxxx@qq.com" />
@@ -144,6 +152,23 @@ async function saveSettings() {
   color: var(--text-muted);
   line-height: 1.6;
   margin: -8px 0 16px;
+}
+
+.form-field-block {
+  width: 100%;
+}
+
+.form-field-block .field-hint {
+  margin: 8px 0 0;
+}
+
+.port-input {
+  width: 200px;
+  max-width: 100%;
+}
+
+.port-input:deep(.n-input) {
+  width: 100%;
 }
 
 .path-row {

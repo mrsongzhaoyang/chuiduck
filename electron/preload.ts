@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AppInitData, SkillPackInfo, TaskRecord, BrowserStatus, ExportRecord, TaskRuntimeState } from '../shared/types.js'
+import type { AppInitData, SkillPackInfo, TaskRecord, BrowserStatus, ExportRecord, TaskRuntimeState, TaskSchedule, TaskScheduleInput } from '../shared/types.js'
+
+/** IPC 只能传递可结构化克隆的纯对象，Vue 响应式 Proxy 会触发 DataCloneError */
+function cloneForIpc<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
 
 const electronAPI = {
   minimize: () => ipcRenderer.invoke('window:minimize'),
@@ -38,7 +43,15 @@ const electronAPI = {
     actionId?: string
     name?: string
     params?: Record<string, unknown>
-  }): Promise<TaskRecord> => ipcRenderer.invoke('tasks:createAndStart', input),
+    schedule?: TaskScheduleInput
+    runNow?: boolean
+  }): Promise<TaskRecord> => ipcRenderer.invoke('tasks:createAndStart', cloneForIpc(input)),
+  tasksUpdateSchedule: (planId: string, schedule: TaskScheduleInput): Promise<TaskRecord | null> =>
+    ipcRenderer.invoke('tasks:updateSchedule', planId, cloneForIpc(schedule)),
+  tasksGetSchedule: (planId: string): Promise<TaskSchedule | null> =>
+    ipcRenderer.invoke('tasks:getSchedule', planId),
+  tasksValidateCron: (cronExpr: string, timezone?: string): Promise<{ valid: boolean; nextRunAt: string | null }> =>
+    ipcRenderer.invoke('tasks:validateCron', cronExpr, timezone),
   tasksPause: (taskId: string) => ipcRenderer.invoke('tasks:pause', taskId),
   tasksResume: (taskId: string) => ipcRenderer.invoke('tasks:resume', taskId),
   tasksCancel: (taskId: string) => ipcRenderer.invoke('tasks:cancel', taskId),
@@ -63,12 +76,17 @@ const electronAPI = {
 
   settingsGet: () => ipcRenderer.invoke('settings:get'),
   settingsBrowseExportDir: (): Promise<string | null> => ipcRenderer.invoke('settings:browseExportDir'),
-  settingsSave: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:save', settings),
+  settingsSave: (settings: Record<string, unknown>) => ipcRenderer.invoke('settings:save', cloneForIpc(settings)),
 
   onTaskProgress: (callback: (state: TaskRuntimeState) => void) => {
     const listener = (_: unknown, state: TaskRuntimeState) => callback(state)
     ipcRenderer.on('task:progress', listener)
     return () => ipcRenderer.removeListener('task:progress', listener)
+  },
+  onScheduleTriggered: (callback: (payload: { planId: string; runId: string; nextRunAt?: string }) => void) => {
+    const listener = (_: unknown, payload: { planId: string; runId: string; nextRunAt?: string }) => callback(payload)
+    ipcRenderer.on('schedule:triggered', listener)
+    return () => ipcRenderer.removeListener('schedule:triggered', listener)
   },
 }
 

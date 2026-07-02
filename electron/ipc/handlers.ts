@@ -27,6 +27,7 @@ import {
   ensureExtensionBundle,
   getExtensionInstallPath,
   getBridgeInfo,
+  restartExtensionBridge,
   startCdpWatcher,
   stopCdpWatcher,
 } from '../browser/extension-manager.js'
@@ -45,14 +46,37 @@ import {
   getRecentTasks,
   setTaskBroadcast,
 } from '../tasks/task-service.js'
+import {
+  getPlanScheduleView,
+  setScheduleBroadcast,
+  setScheduleRunPlanHandler,
+  startScheduleService,
+  stopScheduleService,
+  updatePlanScheduleAndReload,
+  validateCronExpression,
+  computeNextRunAt,
+} from '../tasks/schedule-service.js'
 import { getRuntimeState, loadRuntimeState, formatLogsForUi } from '../runtime/engine.js'
 import { getSystemStats } from '../system/stats.js'
 import type { AppInitData } from '../../shared/types.js'
+import { DEFAULT_TIMEZONE } from '../../shared/cron-presets.js'
 import { ensureAppDirs } from '../paths.js'
+import { isSafeReadablePath } from '../security/safe-path.js'
 
 function broadcast(channel: string, payload: unknown) {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(channel, payload)
+  }
+}
+
+async function buildAppInitData(): Promise<AppInitData> {
+  const browser = await getBrowserStatus()
+  return {
+    stats: getDashboardStats(),
+    recentTasks: getRecentTasks(20),
+    browser,
+    skills: await listAllSkills(),
+    exports: listExports(50),
   }
 }
 
@@ -62,27 +86,20 @@ export async function registerIpcHandlers() {
   await ensureExtensionBundle()
 
   setTaskBroadcast(broadcast)
-
-  ipcMain.handle('app:getInitData', async (): Promise<AppInitData> => {
-    const browser = await getBrowserStatus()
-    return {
-      stats: getDashboardStats(),
-      recentTasks: getRecentTasks(20),
-      browser,
-      skills: await listAllSkills(),
-      exports: listExports(50),
+  setScheduleBroadcast(broadcast)
+  setScheduleRunPlanHandler(async (planId) => {
+    try {
+      const task = await runPlanAgain(planId)
+      return { runId: task.runId, planId: task.planId }
+    } catch (err) {
+      console.error('[schedule] runPlanAgain failed:', planId, err)
+      throw err
     }
   })
+  startScheduleService()
 
-  ipcMain.handle('app:refresh', async () => {
-    return {
-      stats: getDashboardStats(),
-      recentTasks: getRecentTasks(20),
-      browser: await getBrowserStatus(),
-      skills: await listAllSkills(),
-      exports: listExports(50),
-    }
-  })
+  ipcMain.handle('app:getInitData', () => buildAppInitData())
+  ipcMain.handle('app:refresh', () => buildAppInitData())
 
   ipcMain.handle('browser:connect', async () => connectBrowser().then(() => getBrowserStatus()))
   ipcMain.handle('browser:disconnect', async () => {
@@ -131,6 +148,19 @@ export async function registerIpcHandlers() {
   ipcMain.handle('tasks:create', async (_e, input) => createAndQueueTask(input))
   ipcMain.handle('tasks:start', async (_e, taskId: string) => startTaskExecution(taskId))
   ipcMain.handle('tasks:createAndStart', async (_e, input) => createAndStartTask(input))
+  ipcMain.handle('tasks:updateSchedule', async (_e, planId: string, schedule) => {
+    try {
+      updatePlanScheduleAndReload(planId, schedule)
+      return getTask(planId)
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+  ipcMain.handle('tasks:getSchedule', async (_e, planId: string) => getPlanScheduleView(planId))
+  ipcMain.handle('tasks:validateCron', async (_e, cronExpr: string, timezone?: string) => ({
+    valid: validateCronExpression(cronExpr),
+    nextRunAt: computeNextRunAt(cronExpr, timezone || DEFAULT_TIMEZONE),
+  }))
   ipcMain.handle('tasks:pause', async (_e, taskId: string) => pauseTaskById(taskId))
   ipcMain.handle('tasks:resume', async (_e, taskId: string) => resumeTaskById(taskId))
   ipcMain.handle('tasks:cancel', async (_e, taskId: string) => cancelTaskById(taskId))
@@ -155,6 +185,9 @@ export async function registerIpcHandlers() {
   ipcMain.handle('logs:list', async () => listTasksWithLogs(30))
   ipcMain.handle('logs:readImage', async (_e, filePath: string) => {
     if (!filePath || !(await fs.pathExists(filePath))) return null
+    if (!isSafeReadablePath(filePath)) {
+      throw new Error('无权读取该路径下的文件')
+    }
     const buf = await fs.readFile(filePath)
     return `data:image/png;base64,${buf.toString('base64')}`
   })
@@ -192,6 +225,8 @@ export async function registerIpcHandlers() {
   })
 
   ipcMain.handle('settings:save', async (_e, settings: Record<string, unknown>) => {
+    const previousPort = Number(getSetting('bridgePort', '37892'))
+
     if (settings.browserAccount !== undefined) {
       setBrowserAccount(String(settings.browserAccount))
     }
@@ -203,6 +238,11 @@ export async function registerIpcHandlers() {
     if (settings.retryCount !== undefined) setSetting('retryCount', String(settings.retryCount))
     if (settings.operatorName !== undefined) setSetting('operatorName', String(settings.operatorName))
     if (settings.bridgePort !== undefined) setSetting('bridgePort', String(settings.bridgePort))
+
+    const nextPort = Number(getSetting('bridgePort', '37892'))
+    if (settings.bridgePort !== undefined && nextPort !== previousPort) {
+      restartExtensionBridge()
+    }
 
     return {
       ok: true,
@@ -222,6 +262,7 @@ export async function registerIpcHandlers() {
 }
 
 export function unregisterIpcHandlers() {
+  stopScheduleService()
   stopCdpWatcher()
   closeDatabase()
 }

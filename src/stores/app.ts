@@ -42,6 +42,7 @@ function mapTaskForUi(task: TaskRecord) {
     progress: task.progress,
     progressText: task.progressText,
     result: task.result,
+    schedule: task.schedule,
     lastActive: formatRelativeTime(task.updatedAt),
     raw: task,
   }
@@ -145,13 +146,21 @@ export const useAppStore = defineStore('app', () => {
 
     for (const skill of skillPacks.value) {
 
+      const actionText = skill.actions.map((a) => `${a.name} ${a.description}`).join(' ')
+
       if (
 
         skill.name.toLowerCase().includes(q) ||
 
+        skill.id.toLowerCase().includes(q) ||
+
         skill.platform.toLowerCase().includes(q) ||
 
-        skill.description.toLowerCase().includes(q)
+        skill.category.toLowerCase().includes(q) ||
+
+        skill.description.toLowerCase().includes(q) ||
+
+        actionText.toLowerCase().includes(q)
 
       ) {
 
@@ -427,6 +436,10 @@ export const useAppStore = defineStore('app', () => {
 
     params?: Record<string, unknown>
 
+    schedule?: import('../../shared/types.js').TaskScheduleInput
+
+    runNow?: boolean
+
   }) {
 
     const api = getElectronAPI()
@@ -438,6 +451,28 @@ export const useAppStore = defineStore('app', () => {
     await refresh()
 
     return task
+
+  }
+
+
+
+  async function updateTaskSchedule(
+
+    planId: string,
+
+    schedule: import('../../shared/types.js').TaskScheduleInput
+
+  ) {
+
+    const api = getElectronAPI()
+
+    if (!api) throw new Error('请在 Electron 桌面版中操作')
+
+    const result = await api.tasksUpdateSchedule(planId, schedule)
+
+    await refresh()
+
+    return result
 
   }
 
@@ -566,6 +601,8 @@ export const useAppStore = defineStore('app', () => {
     subscribeBrowserStatus,
 
     startTask,
+
+    updateTaskSchedule,
 
     pauseTask,
 

@@ -29,13 +29,63 @@ import {
 } from '../db/index.js'
 
 type ProgressCallback = (state: TaskRuntimeState) => void
-type NodeResult = { jumpToId?: string }
+type NodeResult = { jumpToId?: string; cancelled?: boolean }
 
 const runningTasks = new Map<
   string,
   { paused: boolean; cancelled: boolean; nodeIndex: number; ctx?: RuntimeContext; workflow?: WorkflowDef }
 >()
 const runtimeStates = new Map<string, TaskRuntimeState>()
+const taskLogCache = new Map<string, TaskLogRecord[]>()
+const MAX_CACHED_LOGS = 200
+
+function initTaskLogCache(taskId: string) {
+  taskLogCache.set(taskId, getTaskLogs(taskId))
+}
+
+function clearTaskLogCache(taskId: string) {
+  taskLogCache.delete(taskId)
+}
+
+function appendTaskLog(log: Omit<TaskLogRecord, 'id'>) {
+  const id = addTaskLog(log)
+  const entry: TaskLogRecord = {
+    ...log,
+    id,
+    runId: log.runId || log.taskId,
+  }
+  const cache = taskLogCache.get(log.taskId)
+  if (cache) {
+    cache.push(entry)
+    if (cache.length > MAX_CACHED_LOGS) {
+      cache.splice(0, cache.length - MAX_CACHED_LOGS)
+    }
+  }
+  return id
+}
+
+function getCachedTaskLogs(taskId: string): TaskLogRecord[] {
+  return taskLogCache.get(taskId) ?? getTaskLogs(taskId)
+}
+
+function isTaskCancelled(taskId: string) {
+  return runningTasks.get(taskId)?.cancelled === true
+}
+
+async function waitIfPaused(taskId: string): Promise<'ok' | 'cancelled'> {
+  while (true) {
+    const control = runningTasks.get(taskId)
+    if (control?.cancelled) return 'cancelled'
+    if (!control?.paused) return 'ok'
+    await new Promise((r) => setTimeout(r, 300))
+  }
+}
+
+function markTaskCancelled(taskId: string, workflow: WorkflowDef, onProgress?: ProgressCallback) {
+  deleteCheckpoint(taskId)
+  updateTask(taskId, { status: 'cancelled', progressText: '任务已取消', finishedAt: nowIso() })
+  emit(taskId, workflow, onProgress)
+}
 
 function nowIso() {
   return new Date().toISOString()
@@ -170,7 +220,7 @@ function markStepError(state: TaskRuntimeState, index: number) {
 
 function buildRuntimeState(taskId: string, workflow: WorkflowDef): TaskRuntimeState {
   const task = getTask(taskId)
-  const logs = getTaskLogs(taskId)
+  const logs = getCachedTaskLogs(taskId)
   const existing = runtimeStates.get(taskId)
   const steps =
     existing?.steps ||
@@ -238,7 +288,7 @@ async function executeWorkflowNodeOnce(
 
   if (node.type === 'export') {
     const record = await runExportNode(taskId, taskName, node, ctx)
-    addTaskLog({
+    appendTaskLog({
       taskId,
       nodeId: node.id,
       level: 'success',
@@ -252,7 +302,7 @@ async function executeWorkflowNodeOnce(
   if (node.type === 'condition') {
     const expr = ctx.resolve(node.condition)
     const pass = expr === 'true' || expr === '1' || (!!expr && expr !== 'false' && expr !== '0')
-    addTaskLog({
+    appendTaskLog({
       taskId,
       nodeId: node.id,
       level: 'info',
@@ -270,13 +320,18 @@ async function executeWorkflowNodeOnce(
     const items = ctx.getVar(itemsVar)
     const list = Array.isArray(items) ? items : []
     for (let i = 0; i < list.length; i++) {
+      if (isTaskCancelled(taskId)) return { cancelled: true }
+      const waitResult = await waitIfPaused(taskId)
+      if (waitResult === 'cancelled') return { cancelled: true }
+
       ctx.setVar('loopIndex', i)
       ctx.setVar('loopItem', list[i])
       for (const child of node.body) {
+        if (isTaskCancelled(taskId)) return { cancelled: true }
         await executeWorkflowNodeWithRetry(taskId, taskName, child, ctx, workflow, page)
       }
     }
-    addTaskLog({
+    appendTaskLog({
       taskId,
       nodeId: node.id,
       level: 'success',
@@ -289,7 +344,7 @@ async function executeWorkflowNodeOnce(
 
   if (node.type === 'log') {
     const message = ctx.resolve(node.message) || node.name || '日志'
-    addTaskLog({
+    appendTaskLog({
       taskId,
       nodeId: node.id,
       level: 'info',
@@ -302,7 +357,7 @@ async function executeWorkflowNodeOnce(
 
   await executeNode(page, ctx, node)
 
-  addTaskLog({
+  appendTaskLog({
     taskId,
     nodeId: node.id,
     level: 'success',
@@ -330,7 +385,7 @@ async function executeWorkflowNodeWithRetry(
       lastError = err
       if (attempt < maxRetry) {
         const msg = err instanceof Error ? err.message : String(err)
-        addTaskLog({
+        appendTaskLog({
           taskId,
           nodeId: node.id,
           level: 'warning',
@@ -362,6 +417,7 @@ export async function runTask(
   const ctx = new RuntimeContext(mergedParams)
 
   runningTasks.set(taskId, { paused: false, cancelled: false, nodeIndex: 0, ctx, workflow })
+  initTaskLogCache(taskId)
   updateTask(taskId, {
     status: 'running',
     progress: 0,
@@ -371,8 +427,9 @@ export async function runTask(
   emit(taskId, workflow, onProgress)
 
   const checkpoint = getCheckpoint(taskId)
-  let startIndex = checkpoint ? checkpoint.nodeIndex + 1 : 0
+  let startIndex = 0
   if (checkpoint) {
+    startIndex = checkpoint.resumeMode === 'at' ? checkpoint.nodeIndex : checkpoint.nodeIndex + 1
     ctx.variables = { ...checkpoint.variables }
     ctx.loopStack = [...checkpoint.loopStack]
     updateTask(taskId, { progressText: `从断点恢复，继续第 ${startIndex + 1} 步` })
@@ -397,14 +454,14 @@ export async function runTask(
     for (let i = startIndex; i < workflow.nodes.length; i++) {
       const control = runningTasks.get(taskId)
       if (control?.cancelled) {
-        deleteCheckpoint(taskId)
-        updateTask(taskId, { status: 'cancelled', progressText: '任务已取消', finishedAt: nowIso() })
-        emit(taskId, workflow, onProgress)
+        markTaskCancelled(taskId, workflow, onProgress)
         return
       }
 
-      while (control?.paused) {
-        await new Promise((r) => setTimeout(r, 500))
+      const waitResult = await waitIfPaused(taskId)
+      if (waitResult === 'cancelled') {
+        markTaskCancelled(taskId, workflow, onProgress)
+        return
       }
 
       const node = workflow.nodes[i]
@@ -437,12 +494,18 @@ export async function runTask(
           taskPage
         )
 
+        if (result?.cancelled || isTaskCancelled(taskId)) {
+          markTaskCancelled(taskId, workflow, onProgress)
+          return
+        }
+
         saveCheckpoint({
           taskId,
           nodeIndex: i,
           nodeId: node.id,
           variables: ctx.variables,
           loopStack: ctx.loopStack,
+          resumeMode: 'after',
           updatedAt: nowIso(),
         })
 
@@ -456,7 +519,7 @@ export async function runTask(
 
         const doneState = runtimeStates.get(taskId)
         if (doneState) {
-          const nodeLogs = getTaskLogs(taskId).filter((log) => log.nodeId === node.id)
+          const nodeLogs = getCachedTaskLogs(taskId).filter((log) => log.nodeId === node.id)
           markStepDone(doneState, i, getNodeLogDuration(nodeLogs))
           runtimeStates.set(taskId, doneState)
           onProgress?.(doneState)
@@ -465,7 +528,7 @@ export async function runTask(
         const msg = err instanceof Error ? err.message : String(err)
         const screenshotPath = await captureFailureScreenshot(taskId, taskPage)
         const consoleLines = getTaskConsoleLines(taskId)
-        addTaskLog({
+        appendTaskLog({
           taskId,
           nodeId: node.id,
           level: 'error',
@@ -521,7 +584,7 @@ export async function runTask(
         progressText: `执行失败: ${msg}`,
         finishedAt: nowIso(),
       })
-      addTaskLog({
+      appendTaskLog({
         taskId,
         nodeId: '',
         level: 'error',
@@ -535,6 +598,8 @@ export async function runTask(
   } finally {
     cleanupTaskMonitor(taskId)
     runningTasks.delete(taskId)
+    runtimeStates.delete(taskId)
+    clearTaskLogCache(taskId)
     if (!finishedNormally && getTask(taskId)?.status === 'running') {
       updateTask(taskId, { status: 'error', progressText: '异常结束', finishedAt: nowIso() })
     }
@@ -555,6 +620,7 @@ export function pauseTask(taskId: string) {
         nodeId: node.id,
         variables: control.ctx.variables,
         loopStack: control.ctx.loopStack,
+        resumeMode: 'at',
         updatedAt: nowIso(),
       })
     }
@@ -577,6 +643,9 @@ export function cancelTask(taskId: string) {
   const control = runningTasks.get(taskId)
   if (control) {
     control.cancelled = true
+    control.paused = false
+    deleteCheckpoint(taskId)
+    updateTask(taskId, { status: 'cancelled', progressText: '任务已取消', finishedAt: nowIso() })
     return
   }
 
@@ -597,7 +666,7 @@ export function getRuntimeState(taskId: string): TaskRuntimeState | null {
         status,
         progress: task.progress,
         progressText: task.progressText,
-        logs: getTaskLogs(taskId),
+        logs: getCachedTaskLogs(taskId),
         steps: finalizeSteps(cached.steps, status),
       }
     }
@@ -606,7 +675,7 @@ export function getRuntimeState(taskId: string): TaskRuntimeState | null {
       status,
       progress: task.progress,
       progressText: task.progressText,
-      logs: getTaskLogs(taskId),
+      logs: getCachedTaskLogs(taskId),
     }
   }
 
@@ -620,7 +689,7 @@ export function getRuntimeState(taskId: string): TaskRuntimeState | null {
     progressText: task.progressText,
     currentNodeId: '',
     currentNodeName: '',
-    logs: getTaskLogs(taskId),
+    logs: getCachedTaskLogs(taskId),
     steps: [],
   }
 }
@@ -636,14 +705,14 @@ export async function loadRuntimeState(taskId: string): Promise<TaskRuntimeState
       status: task.status as TaskStatus,
       progress: task.progress,
       progressText: task.progressText,
-      logs: getTaskLogs(taskId),
+      logs: getCachedTaskLogs(taskId),
     }
   }
 
   try {
     const { action, skillDir } = await resolveSkillActionPaths(task.skillId, task.actionId)
     const workflow = await loadWorkflow(skillDir, action)
-    const logs = getTaskLogs(taskId)
+    const logs = getCachedTaskLogs(taskId)
     const steps = buildStepsFromWorkflowAndLogs(workflow, logs, task.status as TaskStatus)
 
     const state: TaskRuntimeState = {

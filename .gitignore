@@ -12,6 +12,8 @@ dist
 dist-electron
 dist-ssr
 release
+_deps_install
+tmp-pkgs
 *.local
 .env
 .env.*

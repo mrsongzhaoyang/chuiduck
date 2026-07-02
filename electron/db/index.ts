@@ -7,6 +7,7 @@ import type {
   TaskCheckpoint,
   ExportRecord,
   DashboardStatsDTO,
+  TaskScheduleInput,
 } from '../../shared/types.js'
 import { getPaths, ensureAppDirs } from '../paths.js'
 import {
@@ -35,6 +36,10 @@ import {
   addRunLog,
   getDashboardStatsFromRuns,
   getExportsByRunId,
+  updatePlanSchedule as updatePlanScheduleInDb,
+  listEnabledScheduledPlans,
+  getPlanById,
+  migrateCheckpointResumeMode,
   type TaskListFilter,
 } from './task-plans.js'
 
@@ -93,6 +98,7 @@ export async function initDatabase() {
       node_id TEXT NOT NULL,
       variables_json TEXT NOT NULL DEFAULT '{}',
       loop_stack_json TEXT NOT NULL DEFAULT '[]',
+      resume_mode TEXT NOT NULL DEFAULT 'after',
       updated_at TEXT NOT NULL,
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
     );
@@ -123,6 +129,7 @@ export async function initDatabase() {
   ensurePlanRunTables(db)
   migrateLegacyTasksTable(db)
   migrateTaskChildTablesToRunFk(db)
+  migrateCheckpointResumeMode(db)
   db.pragma('foreign_keys = ON')
   return db
 }
@@ -175,8 +182,26 @@ export function createPlan(plan: {
   actionId: string
   actionName: string
   params: Record<string, unknown>
+  schedule?: TaskScheduleInput
 }) {
   insertPlan(getDb(), plan)
+}
+
+export function updatePlanSchedule(
+  planId: string,
+  input: TaskScheduleInput & { nextRunAt?: string | null; lastScheduledAt?: string | null }
+) {
+  updatePlanScheduleInDb(getDb(), planId, input)
+}
+
+export function listScheduledPlans() {
+  return listEnabledScheduledPlans(getDb())
+}
+
+export function getPlan(planId: string) {
+  const row = getPlanById(getDb(), planId)
+  if (!row) return null
+  return row
 }
 
 export function createTask(task: Omit<TaskRecord, 'createdAt' | 'updatedAt' | 'planId' | 'runId' | 'runNumber' | 'runCount'> & { params: Record<string, unknown>; planId?: string; runId?: string }) {

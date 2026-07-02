@@ -5,6 +5,8 @@ import type {
   BrowserStatus,
   ExportRecord,
   TaskRuntimeState,
+  TaskSchedule,
+  TaskScheduleInput,
 } from '../../shared/types.js'
 
 export interface ElectronAPI {
@@ -31,7 +33,12 @@ export interface ElectronAPI {
     actionId?: string
     name?: string
     params?: Record<string, unknown>
+    schedule?: TaskScheduleInput
+    runNow?: boolean
   }) => Promise<TaskRecord>
+  tasksUpdateSchedule: (planId: string, schedule: TaskScheduleInput) => Promise<TaskRecord | null>
+  tasksGetSchedule: (planId: string) => Promise<TaskSchedule | null>
+  tasksValidateCron: (cronExpr: string, timezone?: string) => Promise<{ valid: boolean; nextRunAt: string | null }>
   tasksPause: (taskId: string) => Promise<TaskRecord | undefined>
   tasksResume: (taskId: string) => Promise<TaskRecord | undefined>
   tasksCancel: (taskId: string) => Promise<TaskRecord | undefined>
@@ -73,6 +80,7 @@ export interface ElectronAPI {
   settingsBrowseExportDir: () => Promise<string | null>
   settingsSave: (settings: Record<string, unknown>) => Promise<{ ok: boolean; settings: Record<string, unknown> }>
   onTaskProgress: (callback: (state: TaskRuntimeState) => void) => () => void
+  onScheduleTriggered: (callback: (payload: { planId: string; runId: string; nextRunAt?: string }) => void) => () => void
   onBrowserStatus: (callback: (status: BrowserStatus) => void) => () => void
 }
 

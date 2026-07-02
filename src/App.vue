@@ -18,9 +18,10 @@ onMounted(async () => {
     unsubProgress = api.onTaskProgress(() => {
       appStore.refresh()
     })
+    // 兜底轮询：事件推送为主，30 秒刷新一次浏览器/统计状态
     refreshTimer = setInterval(() => {
       appStore.refresh()
-    }, 5000)
+    }, 30000)
   }
 })
 

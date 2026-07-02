@@ -1,14 +1,17 @@
 import { v4 as uuidv4 } from 'uuid'
+import type { TaskScheduleInput } from '../../shared/types.js'
 import {
   createPlan,
   createRunForPlan,
   getTask,
+  getPlan,
   listQueuedTasks,
   listTasks,
   deleteTask,
   clearAllTaskHistory as clearAllTaskHistoryInDb,
   updateTask,
   getSetting,
+  listPlanRuns,
 } from '../db/index.js'
 import {
   runTask,
@@ -18,6 +21,7 @@ import {
   getRuntimeState,
   resolveSkillActionPaths,
 } from '../runtime/engine.js'
+import { reloadPlanSchedule, stopScheduleService, unschedulePlan } from './schedule-service.js'
 
 type BroadcastFn = (channel: string, payload: unknown) => void
 
@@ -50,31 +54,51 @@ function finishRun(runId: string) {
   void processQueue()
 }
 
-export async function createAndQueueTask(input: {
+type CreateTaskInput = {
   skillId: string
   actionId?: string
   name?: string
   params?: Record<string, unknown>
   planId?: string
-}) {
+  schedule?: TaskScheduleInput
+}
+
+async function createPlanRecord(input: CreateTaskInput, planId: string) {
   const { skill, action } = await resolveSkillActionPaths(input.skillId, input.actionId)
+  createPlan({
+    id: planId,
+    name: input.name || `${skill.name} - ${action.name}`,
+    skillId: skill.id,
+    skillName: skill.name,
+    actionId: action.id,
+    actionName: action.name,
+    params: input.params || {},
+    schedule: input.schedule,
+  })
+  if (input.schedule?.enabled) {
+    reloadPlanSchedule(planId)
+  }
+  return { skill, action }
+}
+
+export async function createAndQueueTask(input: CreateTaskInput) {
   const planId = input.planId || uuidv4()
   const runId = uuidv4()
 
   if (!input.planId) {
-    createPlan({
-      id: planId,
-      name: input.name || `${skill.name} - ${action.name}`,
-      skillId: skill.id,
-      skillName: skill.name,
-      actionId: action.id,
-      actionName: action.name,
-      params: input.params || {},
-    })
+    await createPlanRecord(input, planId)
+  } else if (!getPlan(planId)) {
+    throw new Error(`任务方案不存在: ${planId}`)
   }
 
   createRunForPlan(planId, runId)
   return getTask(runId)!
+}
+
+export async function createPlanOnly(input: CreateTaskInput) {
+  const planId = uuidv4()
+  await createPlanRecord(input, planId)
+  return getTask(planId)!
 }
 
 export async function startRunExecution(runId: string) {
@@ -106,12 +130,12 @@ export async function startRunExecution(runId: string) {
 
 export const startTaskExecution = startRunExecution
 
-export async function createAndStartTask(input: {
-  skillId: string
-  actionId?: string
-  name?: string
-  params?: Record<string, unknown>
-}) {
+export async function createAndStartTask(input: CreateTaskInput & { runNow?: boolean }) {
+  const runNow = input.runNow !== false
+  if (!runNow) {
+    return createPlanOnly(input)
+  }
+
   const task = await createAndQueueTask(input)
   if (runningRunIds.size < getMaxConcurrent()) {
     await startRunExecution(task.runId)
@@ -155,7 +179,10 @@ export const cancelTaskById = cancelRunById
 export async function deletePlanById(planId: string) {
   const task = getTask(planId)
   const id = task?.planId || planId
-  if (task?.runId) runningRunIds.delete(task.runId)
+  for (const run of listPlanRuns(id)) {
+    runningRunIds.delete(run.id)
+  }
+  unschedulePlan(id)
   deleteTask(id)
   return { ok: true }
 }
@@ -164,6 +191,7 @@ export const deleteTaskById = deletePlanById
 
 export function clearAllTaskHistory() {
   runningRunIds.clear()
+  stopScheduleService()
   clearAllTaskHistoryInDb()
   return { ok: true }
 }

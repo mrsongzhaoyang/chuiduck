@@ -36,10 +36,17 @@ const filteredSkills = computed(() => {
   if (appStore.searchQuery) {
     const q = appStore.searchQuery.toLowerCase()
     list = list.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.platform.toLowerCase().includes(q) ||
-        s.description.toLowerCase().includes(q)
+      (s) => {
+        const actionText = s.actions.map((a) => `${a.name} ${a.description}`).join(' ')
+        return (
+          s.name.toLowerCase().includes(q) ||
+          s.id.toLowerCase().includes(q) ||
+          s.platform.toLowerCase().includes(q) ||
+          s.category.toLowerCase().includes(q) ||
+          s.description.toLowerCase().includes(q) ||
+          actionText.toLowerCase().includes(q)
+        )
+      }
     )
   }
   return list

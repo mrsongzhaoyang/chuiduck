@@ -5,6 +5,8 @@ import type {
   TaskLogRecord,
   TaskCheckpoint,
   ExportRecord,
+  TaskSchedule,
+  TaskScheduleInput,
 } from '../../shared/types.js'
 
 type Db = import('better-sqlite3').Database
@@ -41,6 +43,27 @@ export function ensurePlanRunTables(db: Db) {
     CREATE INDEX IF NOT EXISTS idx_task_runs_plan ON task_runs(plan_id);
     CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status);
   `)
+  migratePlanScheduleColumns(db)
+}
+
+function migratePlanScheduleColumns(db: Db) {
+  const columns = db.prepare(`PRAGMA table_info(task_plans)`).all() as { name: string }[]
+  const names = new Set(columns.map((c) => c.name))
+  if (!names.has('schedule_enabled')) {
+    db.exec(`ALTER TABLE task_plans ADD COLUMN schedule_enabled INTEGER NOT NULL DEFAULT 0`)
+  }
+  if (!names.has('schedule_cron')) {
+    db.exec(`ALTER TABLE task_plans ADD COLUMN schedule_cron TEXT NOT NULL DEFAULT ''`)
+  }
+  if (!names.has('schedule_timezone')) {
+    db.exec(`ALTER TABLE task_plans ADD COLUMN schedule_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai'`)
+  }
+  if (!names.has('next_run_at')) {
+    db.exec(`ALTER TABLE task_plans ADD COLUMN next_run_at TEXT`)
+  }
+  if (!names.has('last_scheduled_at')) {
+    db.exec(`ALTER TABLE task_plans ADD COLUMN last_scheduled_at TEXT`)
+  }
 }
 
 function tableFkReferences(db: Db, table: string, refTable: string) {
@@ -126,10 +149,22 @@ function createTaskCheckpointsTable(db: Db) {
       node_id TEXT NOT NULL,
       variables_json TEXT NOT NULL DEFAULT '{}',
       loop_stack_json TEXT NOT NULL DEFAULT '[]',
+      resume_mode TEXT NOT NULL DEFAULT 'after',
       updated_at TEXT NOT NULL,
       FOREIGN KEY (task_id) REFERENCES task_runs(id) ON DELETE CASCADE
     );
   `)
+}
+
+export function migrateCheckpointResumeMode(db: Db) {
+  const exists = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='task_checkpoints'`)
+    .get()
+  if (!exists) return
+  const columns = db.prepare(`PRAGMA table_info(task_checkpoints)`).all() as { name: string }[]
+  if (!columns.some((c) => c.name === 'resume_mode')) {
+    db.exec(`ALTER TABLE task_checkpoints ADD COLUMN resume_mode TEXT NOT NULL DEFAULT 'after'`)
+  }
 }
 
 function rebuildTaskLogsTable(db: Db) {
@@ -260,12 +295,51 @@ function mapRunRow(row: Record<string, unknown>): TaskRunRecord {
   }
 }
 
+function mapScheduleFromPlan(plan: Record<string, unknown>): TaskSchedule {
+  return {
+    enabled: Number(plan.schedule_enabled || 0) === 1,
+    cron: String(plan.schedule_cron || ''),
+    timezone: String(plan.schedule_timezone || 'Asia/Shanghai'),
+    nextRunAt: (plan.next_run_at as string) || undefined,
+    lastScheduledAt: (plan.last_scheduled_at as string) || undefined,
+  }
+}
+
+function extractPlanFromRow(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    name: row.name,
+    skill_id: row.skill_id,
+    skill_name: row.skill_name,
+    action_id: row.action_id,
+    action_name: row.action_name,
+    params_json: row.params_json,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    schedule_enabled: row.schedule_enabled,
+    schedule_cron: row.schedule_cron,
+    schedule_timezone: row.schedule_timezone,
+    next_run_at: row.next_run_at,
+    last_scheduled_at: row.last_scheduled_at,
+  }
+}
+
+function parsePlanParams(raw: unknown): Record<string, unknown> {
+  try {
+    return JSON.parse(String(raw || '{}')) as Record<string, unknown>
+  } catch {
+    console.warn('[db] params_json 解析失败，已使用空对象')
+    return {}
+  }
+}
+
 function mergePlanRun(
   plan: Record<string, unknown>,
   run: Record<string, unknown> | null | undefined,
   runCount: number
 ): TaskRecord {
-  const params = JSON.parse((plan.params_json as string) || '{}')
+  const params = parsePlanParams(plan.params_json)
+  const schedule = mapScheduleFromPlan(plan)
   if (!run) {
     return {
       id: plan.id as string,
@@ -283,6 +357,7 @@ function mergePlanRun(
       progressText: '',
       result: '',
       params,
+      schedule,
       createdAt: plan.created_at as string,
       updatedAt: plan.updated_at as string,
     }
@@ -303,6 +378,7 @@ function mergePlanRun(
     progressText: run.progress_text as string,
     result: run.result as string,
     params,
+    schedule,
     createdAt: plan.created_at as string,
     updatedAt: run.updated_at as string,
     startedAt: (run.started_at as string) || undefined,
@@ -310,11 +386,39 @@ function mergePlanRun(
   }
 }
 
-const LATEST_RUN_JOIN = `
-  LEFT JOIN task_runs lr ON lr.id = (
-    SELECT id FROM task_runs WHERE plan_id = p.id ORDER BY run_number DESC LIMIT 1
+const LATEST_RUN_CTE = `
+  WITH latest_runs AS (
+    SELECT r.*, ROW_NUMBER() OVER (PARTITION BY plan_id ORDER BY run_number DESC, id DESC) AS rn
+    FROM task_runs r
+  ),
+  run_counts AS (
+    SELECT plan_id, COUNT(*) AS run_count FROM task_runs GROUP BY plan_id
   )
 `
+
+const PLAN_WITH_LATEST_RUN_FROM = `
+  FROM task_plans p
+  LEFT JOIN latest_runs lr ON lr.plan_id = p.id AND lr.rn = 1
+  LEFT JOIN run_counts rc ON rc.plan_id = p.id
+`
+
+function mapPlanWithLatestRunRow(row: Record<string, unknown>): TaskRecord {
+  const plan = extractPlanFromRow(row)
+  const run = row.run_id
+    ? {
+        id: row.run_id,
+        run_number: row.run_number,
+        status: row.status,
+        progress: row.progress,
+        progress_text: row.progress_text,
+        result: row.result,
+        updated_at: row.run_updated_at,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+      }
+    : null
+  return mergePlanRun(plan, run, (row.run_count as number) || 0)
+}
 
 export function createPlan(
   db: Db,
@@ -326,12 +430,21 @@ export function createPlan(
     actionId: string
     actionName: string
     params: Record<string, unknown>
+    schedule?: TaskScheduleInput
   }
 ) {
   const now = new Date().toISOString()
+  const schedule = plan.schedule
   db.prepare(
-    `INSERT INTO task_plans (id, name, skill_id, skill_name, action_id, action_name, params_json, created_at, updated_at)
-     VALUES (@id, @name, @skillId, @skillName, @actionId, @actionName, @paramsJson, @createdAt, @updatedAt)`
+    `INSERT INTO task_plans (
+      id, name, skill_id, skill_name, action_id, action_name, params_json,
+      schedule_enabled, schedule_cron, schedule_timezone, next_run_at, last_scheduled_at,
+      created_at, updated_at
+    ) VALUES (
+      @id, @name, @skillId, @skillName, @actionId, @actionName, @paramsJson,
+      @scheduleEnabled, @scheduleCron, @scheduleTimezone, @nextRunAt, @lastScheduledAt,
+      @createdAt, @updatedAt
+    )`
   ).run({
     id: plan.id,
     name: plan.name,
@@ -340,8 +453,57 @@ export function createPlan(
     actionId: plan.actionId,
     actionName: plan.actionName,
     paramsJson: JSON.stringify(plan.params),
+    scheduleEnabled: schedule?.enabled ? 1 : 0,
+    scheduleCron: schedule?.enabled ? schedule.cron || '' : '',
+    scheduleTimezone: schedule?.timezone || 'Asia/Shanghai',
+    nextRunAt: null,
+    lastScheduledAt: null,
     createdAt: now,
     updatedAt: now,
+  })
+}
+
+export function updatePlanSchedule(
+  db: Db,
+  planId: string,
+  input: TaskScheduleInput & { nextRunAt?: string | null; lastScheduledAt?: string | null }
+) {
+  const now = new Date().toISOString()
+  db.prepare(
+    `UPDATE task_plans SET
+      schedule_enabled = @enabled,
+      schedule_cron = @cron,
+      schedule_timezone = @timezone,
+      next_run_at = @nextRunAt,
+      last_scheduled_at = COALESCE(@lastScheduledAt, last_scheduled_at),
+      updated_at = @updatedAt
+     WHERE id = @planId`
+  ).run({
+    planId,
+    enabled: input.enabled ? 1 : 0,
+    cron: input.enabled ? input.cron : '',
+    timezone: input.timezone || 'Asia/Shanghai',
+    nextRunAt: input.nextRunAt ?? null,
+    lastScheduledAt: input.lastScheduledAt ?? null,
+    updatedAt: now,
+  })
+}
+
+export function listEnabledScheduledPlans(db: Db): TaskRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT p.*,
+              (SELECT COUNT(*) FROM task_runs WHERE plan_id = p.id) as run_count
+       FROM task_plans p
+       WHERE p.schedule_enabled = 1 AND p.schedule_cron != ''
+       ORDER BY p.updated_at DESC`
+    )
+    .all() as Record<string, unknown>[]
+
+  return rows.map((row) => {
+    const plan = row
+    const runCount = (row.run_count as number) || 0
+    return mergePlanRun(plan, null, runCount)
   })
 }
 
@@ -475,42 +637,16 @@ export function resolveTask(db: Db, id: string): TaskRecord | null {
 export function listPlanTasks(db: Db, limit = 50): TaskRecord[] {
   const rows = db
     .prepare(
-      `SELECT p.*, lr.id as run_id, lr.run_number, lr.status, lr.progress, lr.progress_text, lr.result,
+      `${LATEST_RUN_CTE}
+       SELECT p.*, lr.id as run_id, lr.run_number, lr.status, lr.progress, lr.progress_text, lr.result,
               lr.updated_at as run_updated_at, lr.started_at, lr.finished_at,
-              (SELECT COUNT(*) FROM task_runs WHERE plan_id = p.id) as run_count
-       FROM task_plans p
-       ${LATEST_RUN_JOIN}
+              COALESCE(rc.run_count, 0) as run_count
+       ${PLAN_WITH_LATEST_RUN_FROM}
        ORDER BY COALESCE(lr.updated_at, p.updated_at) DESC
        LIMIT ?`
     )
     .all(limit) as Record<string, unknown>[]
-  return rows.map((row) => {
-    const plan = {
-      id: row.id,
-      name: row.name,
-      skill_id: row.skill_id,
-      skill_name: row.skill_name,
-      action_id: row.action_id,
-      action_name: row.action_name,
-      params_json: row.params_json,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }
-    const run = row.run_id
-      ? {
-          id: row.run_id,
-          run_number: row.run_number,
-          status: row.status,
-          progress: row.progress,
-          progress_text: row.progress_text,
-          result: row.result,
-          updated_at: row.run_updated_at,
-          started_at: row.started_at,
-          finished_at: row.finished_at,
-        }
-      : null
-    return mergePlanRun(plan, run, (row.run_count as number) || 0)
-  })
+  return rows.map(mapPlanWithLatestRunRow)
 }
 
 export type TaskListFilter = 'all' | 'running' | 'completed' | 'failed'
@@ -525,8 +661,9 @@ function statusWhere(filter: TaskListFilter) {
 export function getPlanStatusCounts(db: Db) {
   const rows = db
     .prepare(
-      `SELECT lr.status, COUNT(*) as c FROM task_plans p
-       ${LATEST_RUN_JOIN}
+      `${LATEST_RUN_CTE}
+       SELECT lr.status, COUNT(*) as c
+       ${PLAN_WITH_LATEST_RUN_FROM}
        WHERE lr.id IS NOT NULL
        GROUP BY lr.status`
     )
@@ -550,47 +687,22 @@ export function listPlansPaged(
   const offset = (page - 1) * pageSize
   const filter = options.status || 'all'
   const statusClause = statusWhere(filter)
-  const baseFrom = `FROM task_plans p ${LATEST_RUN_JOIN} WHERE 1=1 ${statusClause}`
+  const baseFrom = `${PLAN_WITH_LATEST_RUN_FROM} WHERE 1=1 ${statusClause}`
 
-  const totalRow = db.prepare(`SELECT COUNT(*) as c ${baseFrom}`).get() as { c: number }
+  const totalRow = db.prepare(`${LATEST_RUN_CTE} SELECT COUNT(*) as c ${baseFrom}`).get() as { c: number }
   const rows = db
     .prepare(
-      `SELECT p.*, lr.id as run_id, lr.run_number, lr.status, lr.progress, lr.progress_text, lr.result,
+      `${LATEST_RUN_CTE}
+       SELECT p.*, lr.id as run_id, lr.run_number, lr.status, lr.progress, lr.progress_text, lr.result,
               lr.updated_at as run_updated_at, lr.started_at, lr.finished_at,
-              (SELECT COUNT(*) FROM task_runs WHERE plan_id = p.id) as run_count
+              COALESCE(rc.run_count, 0) as run_count
        ${baseFrom}
        ORDER BY COALESCE(lr.updated_at, p.updated_at) DESC
        LIMIT ? OFFSET ?`
     )
     .all(pageSize, offset) as Record<string, unknown>[]
 
-  const items = rows.map((row) => {
-    const plan = {
-      id: row.id,
-      name: row.name,
-      skill_id: row.skill_id,
-      skill_name: row.skill_name,
-      action_id: row.action_id,
-      action_name: row.action_name,
-      params_json: row.params_json,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    }
-    const run = row.run_id
-      ? {
-          id: row.run_id,
-          run_number: row.run_number,
-          status: row.status,
-          progress: row.progress,
-          progress_text: row.progress_text,
-          result: row.result,
-          updated_at: row.run_updated_at,
-          started_at: row.started_at,
-          finished_at: row.finished_at,
-        }
-      : null
-    return mergePlanRun(plan, run, (row.run_count as number) || 0)
-  })
+  const items = rows.map(mapPlanWithLatestRunRow)
 
   return {
     items,
@@ -602,7 +714,7 @@ export function listPlansPaged(
 }
 
 function mapRunWithPlanRow(db: Db, row: Record<string, unknown>): TaskRecord {
-  const plan = {
+  const plan = extractPlanFromRow({
     id: row.plan_id,
     name: row.name,
     skill_id: row.skill_id,
@@ -612,7 +724,12 @@ function mapRunWithPlanRow(db: Db, row: Record<string, unknown>): TaskRecord {
     params_json: row.params_json,
     created_at: row.plan_created_at,
     updated_at: row.updated_at,
-  }
+    schedule_enabled: row.schedule_enabled,
+    schedule_cron: row.schedule_cron,
+    schedule_timezone: row.schedule_timezone,
+    next_run_at: row.next_run_at,
+    last_scheduled_at: row.last_scheduled_at,
+  })
   const runCount = getRunCount(db, row.plan_id as string)
   return mergePlanRun(plan, row, runCount)
 }
@@ -620,7 +737,8 @@ function mapRunWithPlanRow(db: Db, row: Record<string, unknown>): TaskRecord {
 export function listDispatchRuns(db: Db, failedLimit = 50) {
   const activeRows = db
     .prepare(
-      `SELECT r.*, p.name, p.skill_id, p.skill_name, p.action_id, p.action_name, p.params_json, p.created_at as plan_created_at
+      `SELECT r.*, p.name, p.skill_id, p.skill_name, p.action_id, p.action_name, p.params_json, p.created_at as plan_created_at,
+              p.schedule_enabled, p.schedule_cron, p.schedule_timezone, p.next_run_at, p.last_scheduled_at
        FROM task_runs r
        JOIN task_plans p ON p.id = r.plan_id
        WHERE r.status IN ('running', 'queued', 'paused')
@@ -630,7 +748,8 @@ export function listDispatchRuns(db: Db, failedLimit = 50) {
 
   const failedRows = db
     .prepare(
-      `SELECT r.*, p.name, p.skill_id, p.skill_name, p.action_id, p.action_name, p.params_json, p.created_at as plan_created_at
+      `SELECT r.*, p.name, p.skill_id, p.skill_name, p.action_id, p.action_name, p.params_json, p.created_at as plan_created_at,
+              p.schedule_enabled, p.schedule_cron, p.schedule_timezone, p.next_run_at, p.last_scheduled_at
        FROM task_runs r
        JOIN task_plans p ON p.id = r.plan_id
        WHERE r.status = 'error'
@@ -652,7 +771,8 @@ export function listDispatchRuns(db: Db, failedLimit = 50) {
 export function listQueuedRuns(db: Db, limit = 10): TaskRecord[] {
   const rows = db
     .prepare(
-      `SELECT r.*, p.name, p.skill_id, p.skill_name, p.action_id, p.action_name, p.params_json, p.created_at as plan_created_at
+      `SELECT r.*, p.name, p.skill_id, p.skill_name, p.action_id, p.action_name, p.params_json, p.created_at as plan_created_at,
+              p.schedule_enabled, p.schedule_cron, p.schedule_timezone, p.next_run_at, p.last_scheduled_at
        FROM task_runs r
        JOIN task_plans p ON p.id = r.plan_id
        WHERE r.status = 'queued'
@@ -713,20 +833,59 @@ export function clearAllTaskHistory(db: Db) {
 
 export function listPlansWithRunLogs(db: Db, limit = 30) {
   const plans = listPlanTasks(db, limit)
+  if (plans.length === 0) return []
+
+  const planIds = plans.map((p) => p.planId)
+  const planPlaceholders = planIds.map(() => '?').join(',')
+  const runRows = db
+    .prepare(
+      `SELECT * FROM task_runs WHERE plan_id IN (${planPlaceholders}) ORDER BY plan_id, run_number DESC`
+    )
+    .all(...planIds) as Record<string, unknown>[]
+
+  const runsByPlan = new Map<string, TaskRunRecord[]>()
+  const allRunIds: string[] = []
+  for (const row of runRows) {
+    const run = mapRunRow(row)
+    allRunIds.push(run.id)
+    const list = runsByPlan.get(run.planId) || []
+    list.push(run)
+    runsByPlan.set(run.planId, list)
+  }
+
+  const logsByRun = new Map<string, TaskLogRecord[]>()
+  if (allRunIds.length > 0) {
+    const runPlaceholders = allRunIds.map(() => '?').join(',')
+    const logRows = db
+      .prepare(
+        `WITH ranked AS (
+           SELECT *, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY id DESC) AS rn
+           FROM task_logs
+           WHERE task_id IN (${runPlaceholders})
+         )
+         SELECT * FROM ranked WHERE rn <= 50 ORDER BY task_id, id ASC`
+      )
+      .all(...allRunIds) as Record<string, unknown>[]
+
+    for (const row of logRows) {
+      const log = mapLogRow(row)
+      const list = logsByRun.get(log.taskId) || []
+      list.push(log)
+      logsByRun.set(log.taskId, list)
+    }
+  }
+
   return plans.map((task) => ({
     task,
-    runs: listRunsByPlanId(db, task.planId).map((run) => ({
+    runs: (runsByPlan.get(task.planId) || []).map((run) => ({
       run,
-      logs: getRunLogs(db, run.id, 50),
+      logs: logsByRun.get(run.id) || [],
     })),
   }))
 }
 
-export function getRunLogs(db: Db, runId: string, limit = 200): TaskLogRecord[] {
-  const rows = db
-    .prepare('SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ?')
-    .all(runId, limit) as Record<string, unknown>[]
-  return rows.reverse().map((row) => ({
+function mapLogRow(row: Record<string, unknown>): TaskLogRecord {
+  return {
     id: row.id as number,
     taskId: row.task_id as string,
     runId: row.task_id as string,
@@ -737,7 +896,14 @@ export function getRunLogs(db: Db, runId: string, limit = 200): TaskLogRecord[] 
     createdAt: row.created_at as string,
     screenshotPath: (row.screenshot_path as string) || undefined,
     consoleLines: parseConsoleJson(row.console_json as string | undefined),
-  }))
+  }
+}
+
+export function getRunLogs(db: Db, runId: string, limit = 200): TaskLogRecord[] {
+  const rows = db
+    .prepare('SELECT * FROM task_logs WHERE task_id = ? ORDER BY id DESC LIMIT ?')
+    .all(runId, limit) as Record<string, unknown>[]
+  return rows.reverse().map(mapLogRow)
 }
 
 function parseConsoleJson(raw: string | undefined): string[] {
@@ -752,16 +918,25 @@ function parseConsoleJson(raw: string | undefined): string[] {
 
 export function saveRunCheckpoint(db: Db, checkpoint: TaskCheckpoint) {
   db.prepare(
-    `INSERT OR REPLACE INTO task_checkpoints (task_id, node_index, node_id, variables_json, loop_stack_json, updated_at)
-     VALUES (@taskId, @nodeIndex, @nodeId, @variablesJson, @loopStackJson, @updatedAt)`
+    `INSERT OR REPLACE INTO task_checkpoints (task_id, node_index, node_id, variables_json, loop_stack_json, resume_mode, updated_at)
+     VALUES (@taskId, @nodeIndex, @nodeId, @variablesJson, @loopStackJson, @resumeMode, @updatedAt)`
   ).run({
     taskId: checkpoint.taskId,
     nodeIndex: checkpoint.nodeIndex,
     nodeId: checkpoint.nodeId,
     variablesJson: JSON.stringify(checkpoint.variables),
     loopStackJson: JSON.stringify(checkpoint.loopStack),
+    resumeMode: checkpoint.resumeMode || 'after',
     updatedAt: checkpoint.updatedAt,
   })
+}
+
+function parseCheckpointJson<T>(raw: unknown, fallback: T): T {
+  try {
+    return JSON.parse(String(raw || (Array.isArray(fallback) ? '[]' : '{}'))) as T
+  } catch {
+    return fallback
+  }
 }
 
 export function getRunCheckpoint(db: Db, runId: string): TaskCheckpoint | null {
@@ -769,12 +944,14 @@ export function getRunCheckpoint(db: Db, runId: string): TaskCheckpoint | null {
     | Record<string, unknown>
     | undefined
   if (!row) return null
+  const resumeMode = String(row.resume_mode || 'after')
   return {
     taskId: row.task_id as string,
     nodeIndex: row.node_index as number,
     nodeId: row.node_id as string,
-    variables: JSON.parse((row.variables_json as string) || '{}'),
-    loopStack: JSON.parse((row.loop_stack_json as string) || '[]'),
+    variables: parseCheckpointJson(row.variables_json, {}),
+    loopStack: parseCheckpointJson(row.loop_stack_json, []),
+    resumeMode: resumeMode === 'at' ? 'at' : 'after',
     updatedAt: row.updated_at as string,
   }
 }
@@ -808,63 +985,58 @@ export function getDashboardStatsFromRuns(db: Db) {
   today.setHours(0, 0, 0, 0)
   const todayIso = today.toISOString()
 
-  const todayRuns = (
-    db.prepare(`SELECT COUNT(*) as c FROM task_runs WHERE created_at >= ?`).get(todayIso) as { c: number }
-  ).c
-
-  const success = (
-    db
-      .prepare(`SELECT COUNT(*) as c FROM task_runs WHERE status = 'completed' AND created_at >= ?`)
-      .get(todayIso) as { c: number }
-  ).c
-
-  const failure = (
-    db
-      .prepare(`SELECT COUNT(*) as c FROM task_runs WHERE status = 'error' AND created_at >= ?`)
-      .get(todayIso) as { c: number }
-  ).c
-
-  const waiting = (
-    db
-      .prepare(`SELECT COUNT(*) as c FROM task_runs WHERE status IN ('queued', 'paused')`)
-      .get() as { c: number }
-  ).c
-
-  const exportExcel = (
-    db.prepare(`SELECT COUNT(*) as c FROM exports WHERE type = 'excel'`).get() as { c: number }
-  ).c
-  const exportJson = (
-    db.prepare(`SELECT COUNT(*) as c FROM exports WHERE type = 'json'`).get() as { c: number }
-  ).c
-  const exportImages = (
-    db.prepare(`SELECT COUNT(*) as c FROM exports WHERE type IN ('image', 'zip')`).get() as { c: number }
-  ).c
-
-  const runtimeMs = (
-    db
-      .prepare(
-        `SELECT COALESCE(SUM(
-          CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
-          THEN (julianday(finished_at) - julianday(started_at)) * 86400000
-          ELSE 0 END
-        ), 0) as ms FROM task_runs WHERE created_at >= ?`
-      )
-      .get(todayIso) as { ms: number }
-  ).ms
-
-  const hours = Math.floor(runtimeMs / 3600000)
-  const mins = Math.floor((runtimeMs % 3600000) / 60000)
-  const runtime = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
-
   const yesterday = new Date(today)
   yesterday.setDate(yesterday.getDate() - 1)
   const yesterdayIso = yesterday.toISOString()
 
-  const yesterdayRuns = (
-    db
-      .prepare(`SELECT COUNT(*) as c FROM task_runs WHERE created_at >= ? AND created_at < ?`)
-      .get(yesterdayIso, todayIso) as { c: number }
-  ).c
+  const runStats = db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN created_at >= @todayIso THEN 1 ELSE 0 END) AS todayRuns,
+         SUM(CASE WHEN status = 'completed' AND created_at >= @todayIso THEN 1 ELSE 0 END) AS success,
+         SUM(CASE WHEN status = 'error' AND created_at >= @todayIso THEN 1 ELSE 0 END) AS failure,
+         SUM(CASE WHEN status IN ('queued', 'paused') THEN 1 ELSE 0 END) AS waiting,
+         COALESCE(SUM(
+           CASE WHEN created_at >= @todayIso AND started_at IS NOT NULL AND finished_at IS NOT NULL
+           THEN (julianday(finished_at) - julianday(started_at)) * 86400000
+           ELSE 0 END
+         ), 0) AS runtimeMs,
+         SUM(CASE WHEN created_at >= @yesterdayIso AND created_at < @todayIso THEN 1 ELSE 0 END) AS yesterdayRuns
+       FROM task_runs`
+    )
+    .get({ todayIso, yesterdayIso }) as {
+    todayRuns: number | null
+    success: number | null
+    failure: number | null
+    waiting: number | null
+    runtimeMs: number | null
+    yesterdayRuns: number | null
+  }
+
+  const exportStats = db
+    .prepare(
+      `SELECT
+         SUM(CASE WHEN type = 'excel' THEN 1 ELSE 0 END) AS exportExcel,
+         SUM(CASE WHEN type = 'json' THEN 1 ELSE 0 END) AS exportJson,
+         SUM(CASE WHEN type IN ('image', 'zip') THEN 1 ELSE 0 END) AS exportImages
+       FROM exports`
+    )
+    .get() as {
+    exportExcel: number | null
+    exportJson: number | null
+    exportImages: number | null
+  }
+
+  const todayRuns = runStats.todayRuns || 0
+  const success = runStats.success || 0
+  const failure = runStats.failure || 0
+  const waiting = runStats.waiting || 0
+  const runtimeMs = runStats.runtimeMs || 0
+  const yesterdayRuns = runStats.yesterdayRuns || 0
+
+  const hours = Math.floor(runtimeMs / 3600000)
+  const mins = Math.floor((runtimeMs % 3600000) / 60000)
+  const runtime = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
 
   const todayRunsChange =
     yesterdayRuns > 0
@@ -880,9 +1052,9 @@ export function getDashboardStatsFromRuns(db: Db) {
     failure,
     waiting,
     runtime,
-    exportExcel,
-    exportImages,
-    exportJson,
+    exportExcel: exportStats.exportExcel || 0,
+    exportImages: exportStats.exportImages || 0,
+    exportJson: exportStats.exportJson || 0,
   }
 }
 

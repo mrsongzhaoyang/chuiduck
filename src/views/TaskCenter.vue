@@ -3,7 +3,9 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { getElectronAPI } from '@/api/electron'
-import type { TaskRunRecord, TaskStatus } from '../../shared/types'
+import type { TaskRunRecord, TaskScheduleInput, TaskStatus } from '../../shared/types'
+import { describeCron } from '../../shared/cron-presets'
+import ScheduleForm from '@/components/ScheduleForm.vue'
 import {
   NTag,
   NButton,
@@ -11,6 +13,7 @@ import {
   NPagination,
   NSpin,
   NEmpty,
+  NModal,
   useMessage,
 } from 'naive-ui'
 import {
@@ -19,6 +22,7 @@ import {
   AddOutline,
   TrashOutline,
   PlayOutline,
+  TimeOutline,
 } from '@vicons/ionicons5'
 
 type TaskUi = {
@@ -34,6 +38,13 @@ type TaskUi = {
   progress: number
   progressText: string
   result: string
+  schedule?: {
+    enabled: boolean
+    cron: string
+    timezone: string
+    nextRunAt?: string
+    lastScheduledAt?: string
+  }
   lastActive: string
 }
 
@@ -51,7 +62,14 @@ const expandedPlans = ref<Record<string, boolean>>({})
 const runHistoryMap = ref<Record<string, TaskRunRecord[]>>({})
 const loadingRuns = ref<Record<string, boolean>>({})
 
+const scheduleModalVisible = ref(false)
+const scheduleSaving = ref(false)
+const editingPlanId = ref('')
+const editingPlanName = ref('')
+const scheduleDraft = ref<TaskScheduleInput>({ enabled: false, cron: '', timezone: 'Asia/Shanghai' })
+
 let unsubProgress: (() => void) | undefined
+let unsubSchedule: (() => void) | undefined
 
 const statusMap: Record<
   TaskStatus,
@@ -72,7 +90,8 @@ function matchesSearch(task: TaskUi) {
   if (!q) return true
   return (
     task.name.toLowerCase().includes(q) ||
-    task.skillPack.toLowerCase().includes(q)
+    task.skillPack.toLowerCase().includes(q) ||
+    task.action.toLowerCase().includes(q)
   )
 }
 
@@ -88,6 +107,15 @@ function formatRunTime(iso?: string) {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
   return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatScheduleLabel(task: TaskUi) {
+  if (!task.schedule?.enabled) return ''
+  const cronText = describeCron(task.schedule.cron)
+  if (task.schedule.nextRunAt) {
+    return `${cronText} · 下次 ${formatRunTime(task.schedule.nextRunAt)}`
+  }
+  return cronText
 }
 
 async function loadTasks() {
@@ -148,6 +176,42 @@ async function handleDelete(planId: string, e?: Event) {
   else await loadTasks()
 }
 
+function openScheduleModal(task: TaskUi, e?: Event) {
+  e?.stopPropagation()
+  editingPlanId.value = task.planId
+  editingPlanName.value = task.name
+  scheduleDraft.value = {
+    enabled: task.schedule?.enabled || false,
+    cron: task.schedule?.cron || '0 9 * * *',
+    timezone: task.schedule?.timezone || 'Asia/Shanghai',
+  }
+  scheduleModalVisible.value = true
+}
+
+async function saveSchedule() {
+  if (!editingPlanId.value) return
+  if (scheduleDraft.value.enabled && !scheduleDraft.value.cron.trim()) {
+    message.warning('请填写 Cron 表达式')
+    return
+  }
+
+  scheduleSaving.value = true
+  try {
+    await appStore.updateTaskSchedule(editingPlanId.value, {
+      enabled: scheduleDraft.value.enabled,
+      cron: scheduleDraft.value.cron,
+      timezone: scheduleDraft.value.timezone || 'Asia/Shanghai',
+    })
+    message.success(scheduleDraft.value.enabled ? '定时任务已启用' : '定时任务已关闭')
+    scheduleModalVisible.value = false
+    await loadTasks()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '保存失败')
+  } finally {
+    scheduleSaving.value = false
+  }
+}
+
 watch(page, () => {
   expandedPlans.value = {}
   loadTasks()
@@ -166,10 +230,15 @@ onMounted(() => {
       }
     }
   })
+  unsubSchedule = api?.onScheduleTriggered(() => {
+    loadTasks()
+    appStore.refresh()
+  })
 })
 
 onUnmounted(() => {
   unsubProgress?.()
+  unsubSchedule?.()
 })
 </script>
 
@@ -178,7 +247,7 @@ onUnmounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">任务中心</h2>
-        <p class="page-desc">管理所有任务方案，查看每次运行的历史记录</p>
+        <p class="page-desc">管理所有任务方案，配置 Cron 定时执行，查看运行历史</p>
       </div>
       <NButton type="primary" @click="router.push('/new-task')">
         <template #icon><NIcon><AddOutline /></NIcon></template>
@@ -201,6 +270,9 @@ onUnmounted(() => {
                 <h3 class="plan-name">{{ task.name }}</h3>
                 <p class="plan-meta">{{ task.skillPack }} · 共执行 {{ task.runCount }} 次</p>
               </div>
+              <NTag v-if="task.schedule?.enabled" type="warning" size="small" round>
+                定时中
+              </NTag>
             </div>
 
             <div class="plan-stats">
@@ -209,12 +281,21 @@ onUnmounted(() => {
                 {{ statusMap[task.status].label }}
               </NTag>
             </div>
+
+            <p v-if="task.schedule?.enabled" class="schedule-line">
+              <NIcon size="14"><TimeOutline /></NIcon>
+              {{ formatScheduleLabel(task) }}
+            </p>
           </div>
 
           <div class="plan-actions">
             <NButton size="small" type="primary" @click="handleRun(task.planId, $event)">
               <template #icon><NIcon><PlayOutline /></NIcon></template>
               再次运行
+            </NButton>
+            <NButton size="small" @click="openScheduleModal(task, $event)">
+              <template #icon><NIcon><TimeOutline /></NIcon></template>
+              定时设置
             </NButton>
             <NButton size="small" @click="toggleHistory(task.planId)">
               <template #icon>
@@ -282,6 +363,21 @@ onUnmounted(() => {
         />
       </div>
     </NSpin>
+
+    <NModal
+      v-model:show="scheduleModalVisible"
+      preset="card"
+      :title="`定时设置 · ${editingPlanName}`"
+      style="width: 520px"
+    >
+      <ScheduleForm v-model="scheduleDraft" />
+      <template #footer>
+        <div class="modal-footer">
+          <NButton @click="scheduleModalVisible = false">取消</NButton>
+          <NButton type="primary" :loading="scheduleSaving" @click="saveSchedule">保存</NButton>
+        </div>
+      </template>
+    </NModal>
   </div>
 </template>
 
@@ -337,6 +433,15 @@ onUnmounted(() => {
   gap: 10px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+.schedule-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--accent, #e6b422);
 }
 
 .plan-actions {
@@ -429,5 +534,11 @@ onUnmounted(() => {
   justify-content: center;
   margin-top: 20px;
   padding-bottom: 8px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>
