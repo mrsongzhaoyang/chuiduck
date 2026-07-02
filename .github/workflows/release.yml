@@ -30,11 +30,28 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Setup Python for node-gyp
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
-        run: npm ci
+        shell: pwsh
+        run: |
+          # GitHub Actions 使用官方源，避免 .npmrc 国内镜像导致 electron 下载失败
+          if (Test-Path .npmrc) { Rename-Item .npmrc .npmrc.bak }
+          npm ci
+          if (Test-Path .npmrc.bak) { Rename-Item .npmrc.bak .npmrc }
+
+      - name: Rebuild native modules
+        run: npm run electron:rebuild
 
       - name: Build Windows zip
-        run: npm run pack:win:zip
+        shell: pwsh
+        run: |
+          if (Test-Path .npmrc) { Rename-Item .npmrc .npmrc.bak }
+          npm run pack:win:zip
+          if (Test-Path .npmrc.bak) { Rename-Item .npmrc.bak .npmrc }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
