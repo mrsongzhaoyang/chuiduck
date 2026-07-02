@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "垂钓鸭浏览器桥接",
+  "version": "1.0.0",
+  "description": "连接垂钓鸭桌面端，在普通 Chrome 中执行自动化任务",
+  "permissions": ["tabs", "storage", "alarms", "debugger", "scripting"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "垂钓鸭"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

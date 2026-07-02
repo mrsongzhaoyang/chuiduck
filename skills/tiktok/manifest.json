@@ -1,0 +1,12 @@
+{
+  "id": "tiktok",
+  "name": "TikTok 达人采集",
+  "version": "1.2.0",
+  "platform": "TikTok",
+  "category": "social",
+  "description": "TikTok 达人信息与视频数据分析",
+  "actions": [
+    { "id": "creator", "name": "达人采集", "description": "采集达人信息", "workflow": "actions/creator/workflow.json" },
+    { "id": "video", "name": "视频分析", "description": "分析视频数据", "workflow": "actions/video/workflow.json" }
+  ]
+}

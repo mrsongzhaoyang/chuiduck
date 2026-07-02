@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>垂钓鸭插件设置</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        max-width: 520px;
+        margin: 40px auto;
+        padding: 0 20px;
+        background: #141820;
+        color: #e8eaed;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      label {
+        display: block;
+        margin: 16px 0 6px;
+        font-size: 13px;
+        color: #9aa0a6;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid #3c4043;
+        background: #1e2430;
+        color: #e8eaed;
+        font-size: 14px;
+      }
+      button {
+        margin-top: 16px;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 8px;
+        background: #ffd93d;
+        color: #141820;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .hint {
+        font-size: 12px;
+        color: #9aa0a6;
+        line-height: 1.6;
+        margin-top: 20px;
+      }
+      .ok {
+        color: #34a853;
+        margin-top: 12px;
+        font-size: 13px;
+      }
+      ol {
+        padding-left: 18px;
+        line-height: 1.8;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🦆 垂钓鸭插件配对</h1>
+    <ol>
+      <li>打开垂钓鸭桌面端 → 浏览器管理</li>
+      <li>复制页面上的<strong>配对码</strong></li>
+      <li>粘贴到下方并保存</li>
+      <li>正常打开 Chrome 即可，无需调试模式</li>
+    </ol>
+
+    <label for="token">配对码</label>
+    <input id="token" placeholder="在垂钓鸭「浏览器管理」中复制" />
+
+    <label for="port">桥接端口（一般不用改）</label>
+    <input id="port" type="number" value="37892" />
+
+    <button id="save">保存并连接</button>
+    <p id="msg" class="ok"></p>
+
+    <p class="hint">
+      配对成功后，插件弹窗会显示「已连接垂钓鸭」。桌面端会自动识别本机 Chrome 的标签页。
+    </p>
+
+    <script src="options.js"></script>
+  </body>
+</html>

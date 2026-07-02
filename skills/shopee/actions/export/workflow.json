@@ -1,0 +1,1 @@
+{ "id": "export", "name": "商品导出", "nodes": [{ "id": "n1", "type": "extract", "name": "采集", "var": "data" }, { "id": "n2", "type": "export", "name": "导出", "format": "excel", "data": "data" }] }

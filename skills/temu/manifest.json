@@ -1,0 +1,43 @@
+{
+  "id": "temu",
+  "name": "Temu 全能采集",
+  "version": "2.0.0",
+  "platform": "Temu",
+  "category": "ecommerce",
+  "description": "Temu 平台全功能数据采集：商品导出、售后、评价、图片",
+  "author": "ChuiDuck",
+  "actions": [
+    {
+      "id": "export",
+      "name": "商品导出",
+      "description": "批量导出商品数据到 Excel",
+      "workflow": "actions/export/workflow.json",
+      "params": [
+        { "field": "maxPages", "label": "最大页数", "type": "number", "default": 100 },
+        { "field": "exportFormat", "label": "导出格式", "type": "select", "default": "excel", "options": [
+          { "label": "Excel", "value": "excel" },
+          { "label": "JSON", "value": "json" },
+          { "label": "CSV", "value": "csv" }
+        ]}
+      ]
+    },
+    {
+      "id": "aftersale",
+      "name": "售后导出",
+      "description": "导出售后订单数据",
+      "workflow": "actions/aftersale/workflow.json"
+    },
+    {
+      "id": "review",
+      "name": "评价采集",
+      "description": "采集商品评价数据",
+      "workflow": "actions/review/workflow.json"
+    },
+    {
+      "id": "image",
+      "name": "图片下载",
+      "description": "批量下载商品图片",
+      "workflow": "actions/image/workflow.json"
+    }
+  ]
+}

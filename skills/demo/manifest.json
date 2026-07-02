@@ -1,0 +1,21 @@
+{
+  "id": "demo",
+  "name": "Demo 演示技能",
+  "version": "1.0.0",
+  "platform": "Demo",
+  "category": "system",
+  "description": "用于测试 CDP 连接与 Runtime 引擎的演示技能包",
+  "icon": "icon.png",
+  "author": "ChuiDuck",
+  "actions": [
+    {
+      "id": "hello",
+      "name": "页面采集演示",
+      "description": "打开 example.com 并采集页面标题",
+      "workflow": "actions/hello/workflow.json",
+      "params": [
+        { "field": "targetUrl", "label": "目标 URL", "type": "string", "default": "https://example.com" }
+      ]
+    }
+  ]
+}

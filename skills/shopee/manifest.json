@@ -1,0 +1,12 @@
+{
+  "id": "shopee",
+  "name": "Shopee 店铺监控",
+  "version": "1.0.0",
+  "platform": "Shopee",
+  "category": "ecommerce",
+  "description": "Shopee 店铺数据监控与商品采集",
+  "actions": [
+    { "id": "monitor", "name": "店铺监控", "description": "监控店铺数据", "workflow": "actions/monitor/workflow.json" },
+    { "id": "export", "name": "商品导出", "description": "导出店铺商品", "workflow": "actions/export/workflow.json" }
+  ]
+}

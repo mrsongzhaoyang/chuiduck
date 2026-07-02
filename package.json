@@ -1,0 +1,88 @@
+{
+  "name": "chuiduck",
+  "private": true,
+  "version": "1.0.0",
+  "description": "垂钓鸭 - 在网页世界垂钓数据的自动化平台",
+  "author": "ChuiDuck",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite --config vite.config.web.ts",
+    "dev:electron": "vite",
+    "electron:install": "node node_modules/electron/install.js",
+    "electron:rebuild": "npx @electron/rebuild -f -w better-sqlite3",
+    "postinstall": "npx @electron/rebuild -f -w better-sqlite3 || echo skip native rebuild",
+    "build": "vue-tsc -b && vite build --config vite.config.web.ts",
+    "build:electron": "vue-tsc -b && vite build",
+    "pack:win": "npm run build:electron && electron-builder --win",
+    "preview": "vite preview --config vite.config.web.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "exceljs": "^4.4.0",
+    "fs-extra": "^11.3.6",
+    "puppeteer-core": "^25.2.1",
+    "uuid": "^14.0.1",
+    "vue": "^3.5.39",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^24.13.2",
+    "@types/ws": "^8.18.1",
+    "@vicons/ionicons5": "^0.13.0",
+    "@vicons/tabler": "^0.13.0",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/tsconfig": "^0.9.1",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "naive-ui": "^2.44.1",
+    "pinia": "^3.0.4",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1",
+    "vite-plugin-electron": "^1.1.0",
+    "vite-plugin-electron-renderer": "^1.0.0",
+    "vue-router": "^5.1.0",
+    "vue-tsc": "^3.3.5"
+  },
+  "build": {
+    "appId": "com.chuiduck.app",
+    "productName": "垂钓鸭",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "skills",
+        "to": "skills",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "chrome-extension",
+        "to": "chrome-extension",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/favicon.svg"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "垂钓鸭"
+    }
+  }
+}

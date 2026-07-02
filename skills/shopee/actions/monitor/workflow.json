@@ -1,0 +1,1 @@
+{ "id": "monitor", "name": "店铺监控", "nodes": [{ "id": "n1", "type": "log", "name": "监控", "message": "Shopee 监控" }] }

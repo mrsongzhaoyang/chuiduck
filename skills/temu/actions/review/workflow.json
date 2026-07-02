@@ -1,0 +1,10 @@
+{
+  "id": "review",
+  "name": "评价采集",
+  "nodes": [
+    { "id": "n1", "type": "log", "name": "进入评价页面", "message": "开始采集评价" },
+    { "id": "n2", "type": "wait", "name": "等待", "ms": 1000 },
+    { "id": "n3", "type": "extract", "name": "采集评价", "var": "reviews" },
+    { "id": "n4", "type": "export", "name": "导出 JSON", "format": "json", "data": "reviews" }
+  ]
+}

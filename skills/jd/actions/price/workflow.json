@@ -1,0 +1,1 @@
+{ "id": "price", "name": "价格巡检", "nodes": [{ "id": "n1", "type": "log", "name": "巡检", "message": "京东价格巡检" }, { "id": "n2", "type": "export", "name": "导出", "format": "excel", "data": "prices" }] }

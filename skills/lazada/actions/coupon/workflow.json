@@ -1,0 +1,1 @@
+{ "id": "coupon", "name": "优惠券领取", "nodes": [{ "id": "n1", "type": "log", "name": "领取", "message": "Lazada 优惠券" }] }

@@ -1,0 +1,9 @@
+{
+  "id": "review",
+  "name": "评价抓取",
+  "nodes": [
+    { "id": "n1", "type": "log", "name": "开始采集", "message": "SHEIN 评价采集" },
+    { "id": "n2", "type": "extract", "name": "采集", "var": "data" },
+    { "id": "n3", "type": "export", "name": "导出", "format": "json", "data": "data" }
+  ]
+}

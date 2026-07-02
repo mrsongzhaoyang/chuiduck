@@ -1,0 +1,10 @@
+{
+  "id": "export",
+  "name": "商品导出",
+  "nodes": [
+    { "id": "n1", "type": "log", "name": "打开商品管理", "message": "准备打开 Temu 商品管理页面" },
+    { "id": "n2", "type": "wait", "name": "等待页面", "ms": 2000 },
+    { "id": "n3", "type": "extract", "name": "采集商品列表", "selector": "table tr", "var": "products" },
+    { "id": "n4", "type": "export", "name": "导出 Excel", "format": "excel", "data": "products" }
+  ]
+}

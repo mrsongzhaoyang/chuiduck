@@ -1,0 +1,32 @@
+{
+  "id": "home-text",
+  "name": "百度首页文字采集",
+  "nodes": [
+    {
+      "id": "step-open",
+      "type": "openPage",
+      "name": "打开百度首页",
+      "url": "{{targetUrl}}"
+    },
+    {
+      "id": "step-wait",
+      "type": "wait",
+      "name": "等待页面加载",
+      "ms": 3000
+    },
+    {
+      "id": "step-extract",
+      "type": "extract",
+      "name": "采集首页所有文字",
+      "mode": "allText",
+      "var": "homeText"
+    },
+    {
+      "id": "step-export",
+      "type": "export",
+      "name": "导出采集结果",
+      "format": "{{exportFormat}}",
+      "data": "homeText"
+    }
+  ]
+}

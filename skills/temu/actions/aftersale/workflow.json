@@ -1,0 +1,10 @@
+{
+  "id": "aftersale",
+  "name": "售后导出",
+  "nodes": [
+    { "id": "n1", "type": "log", "name": "进入售后页面", "message": "打开售后管理" },
+    { "id": "n2", "type": "wait", "name": "等待加载", "ms": 1500 },
+    { "id": "n3", "type": "extract", "name": "采集售后数据", "var": "aftersales" },
+    { "id": "n4", "type": "export", "name": "导出", "format": "excel", "data": "aftersales" }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "lazada",
+  "name": "Lazada 优惠券",
+  "version": "1.0.0",
+  "platform": "Lazada",
+  "category": "ecommerce",
+  "description": "Lazada 优惠券自动领取",
+  "actions": [
+    { "id": "coupon", "name": "优惠券领取", "description": "自动领取优惠券", "workflow": "actions/coupon/workflow.json" }
+  ]
+}

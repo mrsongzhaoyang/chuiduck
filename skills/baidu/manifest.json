@@ -1,0 +1,36 @@
+{
+  "id": "baidu",
+  "name": "百度首页采集",
+  "version": "1.0.0",
+  "platform": "百度",
+  "category": "system",
+  "description": "打开百度首页，采集页面全部可见文字并导出",
+  "author": "ChuiDuck",
+  "actions": [
+    {
+      "id": "home-text",
+      "name": "首页文字采集",
+      "description": "打开 www.baidu.com，采集首页所有文字",
+      "workflow": "actions/home-text/workflow.json",
+      "params": [
+        {
+          "field": "targetUrl",
+          "label": "目标网址",
+          "type": "string",
+          "default": "https://www.baidu.com"
+        },
+        {
+          "field": "exportFormat",
+          "label": "导出格式",
+          "type": "select",
+          "default": "json",
+          "options": [
+            { "label": "JSON", "value": "json" },
+            { "label": "Excel", "value": "excel" },
+            { "label": "CSV", "value": "csv" }
+          ]
+        }
+      ]
+    }
+  ]
+}

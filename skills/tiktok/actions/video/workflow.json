@@ -1,0 +1,1 @@
+{ "id": "video", "name": "视频分析", "nodes": [{ "id": "n1", "type": "extract", "name": "分析", "var": "videos" }, { "id": "n2", "type": "export", "name": "导出", "format": "json", "data": "videos" }] }

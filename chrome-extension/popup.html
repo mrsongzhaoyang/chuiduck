@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>垂钓鸭</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="header">
+        <span class="logo">🦆</span>
+        <div>
+          <h1>垂钓鸭</h1>
+          <p id="statusText">检测中…</p>
+        </div>
+      </div>
+      <div id="statusDot" class="status-dot offline"></div>
+      <div class="section">
+        <h2>当前标签页</h2>
+        <ul id="tabList"></ul>
+      </div>
+      <button id="openOptions" class="btn">配对设置</button>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

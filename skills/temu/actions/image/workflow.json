@@ -1,0 +1,10 @@
+{
+  "id": "image",
+  "name": "图片下载",
+  "nodes": [
+    { "id": "n1", "type": "log", "name": "扫描商品图片", "message": "开始下载图片" },
+    { "id": "n2", "type": "wait", "name": "等待", "ms": 1000 },
+    { "id": "n3", "type": "extract", "name": "提取图片链接", "var": "images" },
+    { "id": "n4", "type": "export", "name": "导出清单", "format": "json", "data": "images" }
+  ]
+}

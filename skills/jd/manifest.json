@@ -1,0 +1,11 @@
+{
+  "id": "jd",
+  "name": "京东价格巡检",
+  "version": "1.1.0",
+  "platform": "京东",
+  "category": "ecommerce",
+  "description": "京东商品价格自动巡检",
+  "actions": [
+    { "id": "price", "name": "价格巡检", "description": "定时巡检商品价格", "workflow": "actions/price/workflow.json" }
+  ]
+}
