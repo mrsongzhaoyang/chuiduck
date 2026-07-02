@@ -5,6 +5,9 @@
   "description": "垂钓鸭 - 在网页世界垂钓数据的自动化平台",
   "author": "ChuiDuck",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
