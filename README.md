@@ -35,4 +35,4 @@ npm run pack:win
 
 ## 许可证
 
-Private
+[MIT](LICENSE)

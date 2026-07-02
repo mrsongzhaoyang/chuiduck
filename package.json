@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "垂钓鸭 - 在网页世界垂钓数据的自动化平台",
   "author": "ChuiDuck",
+  "license": "MIT",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
