@@ -16,6 +16,7 @@
     "build": "vue-tsc -b && vite build --config vite.config.web.ts",
     "build:electron": "vue-tsc -b && vite build",
     "pack:win": "npm run build:electron && electron-builder --win",
+    "pack:win:zip": "npm run build:electron && electron-builder --win zip --x64",
     "preview": "vite preview --config vite.config.web.ts"
   },
   "dependencies": {
@@ -49,7 +50,8 @@
   },
   "build": {
     "appId": "com.chuiduck.app",
-    "productName": "垂钓鸭",
+    "productName": "ChuiDuck",
+    "artifactName": "ChuiDuck-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -76,7 +78,18 @@
     ],
     "win": {
       "target": [
-        "nsis"
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "public/favicon.svg"
     },

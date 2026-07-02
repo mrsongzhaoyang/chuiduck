@@ -2,6 +2,9 @@
 
 在网页世界垂钓数据的本地化自动化平台。
 
+**介绍页：** https://mrsongzhaoyang.github.io/chuiduck/  
+**下载桌面版：** https://github.com/mrsongzhaoyang/chuiduck/releases/latest
+
 垂钓鸭是一款面向网页数据采集与自动化的桌面应用，将「选技能包 → 建任务 → 自动执行 → 导出结果」串成完整链路，让非技术人员也能在熟悉的 Chrome 浏览器里完成重复性网页操作。
 
 ## 特性
@@ -26,12 +29,18 @@ npm install
 npm run dev:electron
 ```
 
-## 构建
+## 构建与发布
 
 ```bash
-npm run build:electron
-npm run pack:win
+# 本地打包 Windows zip
+npm run pack:win:zip
+
+# 打 tag 后 GitHub Actions 自动发布 Release
+git tag v1.0.0
+git push origin v1.0.0
 ```
+
+GitHub Pages 介绍页位于 `docs/`，推送到 `main` 分支后自动部署。
 
 ## 许可证
 
